@@ -214,7 +214,7 @@ def zwaveEvent(hubitat.zwave.commands.meterv1.MeterReport cmd) {
         	newValue = (Math.round(cmd.scaledMeterValue * 100) / 100);
             state.energyTotalInDevice = newValue; 
             newValue = newValue - state.energyTotalInDeviceAtReset;
-        	if (newValue != state.energyValue && newValue) {
+        	if (newValue != state.energyValue) {
         		formattedValue = String.format("%5.2f", newValue)
     			dispValue = "${formattedValue}\nkWh"
                 sendEvent(name: "energyDisp", value: dispValue as String, unit: "", descriptionText: "Display Energy: ${newValue} kWh", displayed: false)
