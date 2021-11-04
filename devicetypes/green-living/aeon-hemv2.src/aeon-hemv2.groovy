@@ -36,8 +36,8 @@ metadata {
         capability "Refresh"
         capability "Polling"
         
-        attribute "energy", "string"
-        attribute "power", "string"
+        attribute "energy", "number"
+        attribute "power", "number"
         
         attribute "energyDisp", "string" // Total Kwh
         attribute "energyOne", "string"
@@ -53,18 +53,6 @@ metadata {
         command "toggleDisplay"
         
 		fingerprint deviceId: "0x2101", inClusters: " 0x70,0x31,0x72,0x86,0x32,0x80,0x85,0x60"
-	}
-
-	// simulator metadata
-	simulator {
-		for (int i = 0; i <= 10000; i += 1000) {
-			status "power  ${i} W": new physicalgraph.zwave.Zwave().meterV1.meterReport(
-				scaledMeterValue: i, precision: 3, meterType: 33, scale: 2, size: 4).incomingMessage()
-		}
-		for (int i = 0; i <= 100; i += 10) {
-			status "energy  ${i} kWh": new physicalgraph.zwave.Zwave().meterV1.meterReport(
-				scaledMeterValue: i, precision: 3, meterType: 33, scale: 0, size: 4).incomingMessage()
-		}
 	}
 
 	// tile definitions
@@ -178,7 +166,7 @@ metadata {
 	}
     preferences {
         input "voltage", "number", title: "Voltage (120)", /* description: "120", */ defaultValue: 120
-    	input "kWhCost", "string", title: "\$/kWh (0.1005)", description: "0.1005", defaultValue: "0.1005" as String
+    	input "kWhCost", "string", title: "\$/kWh (0.11)", description: "0.11", defaultValue: "0.11" as String
     	input "kWhDelay", "number", title: "kWh report seconds (60)", /* description: "120", */ defaultValue: 120
     	input "detailDelay", "number", title: "Detail report seconds (30)", /* description: "30", */ defaultValue: 30
 		input "enableLog", "boolean", title: "Enable Logging", /* description: "false", */ defaultValue: false
@@ -210,7 +198,7 @@ def parse(String description) {
 	}
 }
 
-def zwaveEvent(physicalgraph.zwave.commands.meterv1.MeterReport cmd) {
+def zwaveEvent(hubitat.zwave.commands.meterv1.MeterReport cmd) {
     def dispValue
     def newValue
     def formattedValue
@@ -218,13 +206,15 @@ def zwaveEvent(physicalgraph.zwave.commands.meterv1.MeterReport cmd) {
     def MAX_WATTS = 24000
     
 	def timeString = new Date().format("h:mm a", location.timeZone)
-    
-    if (cmd.meterType == 33) {
-		if (cmd.scale == 0) {
+    logDebug "cmd.meterType ${cmd.meterType}"
+    logDebug "cmd.scale ${cmd.scale}"
+    logDebug "cmd.scaledMeterValue ${cmd.scaledMeterValue}"
+    if (cmd.meterType == 1) {  // Orignal value 33 not working, device seems returing meterType = 1
+		if (cmd.scale == 0 && cmd.scaledMeterValue != null) {
         	newValue = (Math.round(cmd.scaledMeterValue * 100) / 100);
             state.energyTotalInDevice = newValue; 
             newValue = newValue - state.energyTotalInDeviceAtReset;
-        	if (newValue != state.energyValue) {
+        	if (newValue != state.energyValue && newValue) {
         		formattedValue = String.format("%5.2f", newValue)
     			dispValue = "${formattedValue}\nkWh"
                 sendEvent(name: "energyDisp", value: dispValue as String, unit: "", descriptionText: "Display Energy: ${newValue} kWh", displayed: false)
@@ -236,7 +226,7 @@ def zwaveEvent(physicalgraph.zwave.commands.meterv1.MeterReport cmd) {
                 [name: "energy", value: newValue, unit: "kWh", descriptionText: "Total Energy: ${formattedValue} kWh"]
             }
 		} 
-		else if (cmd.scale == 1) {
+		else if (cmd.scale == 1 && cmd.scaledMeterValue != null) {
             newValue = Math.round( cmd.scaledMeterValue * 100) / 100
             if (newValue != state.energyValue) {
             	formattedValue = String.format("%5.2f", newValue)
@@ -246,7 +236,7 @@ def zwaveEvent(physicalgraph.zwave.commands.meterv1.MeterReport cmd) {
 				[name: "energy", value: newValue, unit: "kVAh", descriptionText: "Total Energy: ${formattedValue} kVAh"]
             }
 		}
-		else if (cmd.scale==2) {				
+		else if (cmd.scale==2 && cmd.scaledMeterValue != null) {				
         	newValue = Math.round(cmd.scaledMeterValue)		// really not worth the hassle to show decimals for Watts
             if (newValue > MAX_WATTS) { return }				// Ignore ridiculous values (a 200Amp supply @ 120volts is roughly 24000 watts)
         	if (newValue != state.powerValue) {
@@ -272,7 +262,7 @@ def zwaveEvent(physicalgraph.zwave.commands.meterv1.MeterReport cmd) {
  	}
 }
 
-def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
+def zwaveEvent(hubitat.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
 	def dispValue
 	def newValue
 	def formattedValue
@@ -283,7 +273,7 @@ def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap 
    		def encapsulatedCommand = cmd.encapsulatedCommand([0x30: 1, 0x31: 1]) // can specify command class versions here like in zwave.parse
 		if (encapsulatedCommand) {
 			if (cmd.sourceEndPoint == 1) {
-				if (encapsulatedCommand.scale == 2 ) {
+				if (encapsulatedCommand.scale == 2 && encapsulatedCommand.scaledMeterValue) {
 					newValue = Math.round(encapsulatedCommand.scaledMeterValue)
                     if (newValue > MAX_WATTS) { return }
 					formattedValue = newValue as String
@@ -295,7 +285,7 @@ def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap 
 						}
 					}
 				} 
-				else if (encapsulatedCommand.scale == 0 ){
+				else if (encapsulatedCommand.scale == 0 && encapsulatedCommand.scaledMeterValue){
 					newValue = Math.round(encapsulatedCommand.scaledMeterValue * 100) / 100
             		state.energyOneInDevice = newValue;
             		newValue = newValue - state.energyOneInDeviceAtReset;
@@ -308,7 +298,7 @@ def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap 
 						}
 					}
 				}
-				else if (encapsulatedCommand.scale == 1 ){
+				else if (encapsulatedCommand.scale == 1 && encapsulatedCommand.scaledMeterValue){
 					newValue = Math.round(encapsulatedCommand.scaledMeterValue * 100) / 100
 					formattedValue = String.format("%5.2f", newValue)
 					dispValue = "${formattedValue}\nkVAh"
@@ -321,7 +311,7 @@ def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap 
 				}	
 			} 
 			else if (cmd.sourceEndPoint == 2) {
-				if (encapsulatedCommand.scale == 2 ){
+				if (encapsulatedCommand.scale == 2 && encapsulatedCommand.scaledMeterValue != null){
 					newValue = Math.round(encapsulatedCommand.scaledMeterValue)
                     if (newValue > MAX_WATTS ) { return }
 					formattedValue = newValue as String
@@ -362,7 +352,7 @@ def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap 
 	}
 }
 
-def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv1.SensorMultilevelReport cmd) {
+def zwaveEvent(hubitat.zwave.commands.sensormultilevelv1.SensorMultilevelReport cmd) {
     def dispValue
     def newValue
     def MAX_WATTS = 24000
@@ -370,7 +360,7 @@ def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv1.SensorMultilevelR
 	def timeString = new Date().format("h:mm a", location.timeZone)
     
     if (cmd.sensorType == 4) { // Power
-		if (cmd.scale == 0) {
+		if (cmd.scale == 0 && cmd.scaledSensorValue != null) {
         	newValue = Math.round(cmd.scaledSensorValue)		// really not worth the hassle to show decimals for Watts
             if (newValue > MAX_WATTS) { return }				// Ignore ridiculous values (a 200Amp supply @ 120volts is roughly 24000 watts)
         	if (newValue != state.powerValue) {
@@ -396,7 +386,7 @@ def zwaveEvent(physicalgraph.zwave.commands.sensormultilevelv1.SensorMultilevelR
 	}
 }
 
-def zwaveEvent(physicalgraph.zwave.Command cmd) {
+def zwaveEvent(hubitat.zwave.Command cmd) {
 	// Handles all Z-Wave commands we aren't interested in
     logDebug("Unhandled event ${cmd}")
 	[:]
@@ -428,7 +418,8 @@ def toggleDisplay() {
 	else { 
 		state.display = 1
 	}
-    
+        
+    logResetDataState()
 	resetDisplay()
 }
 
@@ -449,6 +440,15 @@ def resetDisplay() {
 	}
 }
 
+def logResetDataState() {
+    logDebug("energyTotalInDeviceAtReset: " + state.energyTotalInDeviceAtReset);
+    logDebug("energyTwoInDeviceAtReset: " + state.energyTwoInDeviceAtReset);
+    logDebug("energyOneInDeviceAtReset: " + state.energyOneInDeviceAtReset);
+    logDebug("energyTotalInDevice: " + state.energyTotalInDevice);
+    logDebug("energyTwoInDevice: " + state.energyTwoInDevice);
+    logDebug("energyOneInDevice: " + state.energyOneInDevice);
+}
+
 def reset() {
 	logDebug "reset()"
     
@@ -464,6 +464,8 @@ def reset() {
     state.energyL2Disp = ""
     state.powerL1Disp = ""
     state.powerL2Disp = ""
+    
+    logResetDataState()
     
     state.energyTotalInDeviceAtReset = state.energyTotalInDevice;
  	state.energyOneInDeviceAtReset = state.energyOneInDevice;
@@ -530,7 +532,7 @@ def configure() {
 	}
     
 	def cmd = delayBetween([
-//  	zwave.configurationV1.configurationSet(parameterNumber: 255, size: 1, scaledConfigurationValue: 2).format(),      // Reset factory defaults
+//    	zwave.configurationV1.configurationSet(parameterNumber: 255, size: 1, scaledConfigurationValue: 2).format(),      // Reset factory defaults
 //		zwave.configurationV1.configurationSet(parameterNumber: 100, size: 1, scaledConfigurationValue: 0).format(),		// reset to defaults
 		zwave.configurationV1.configurationSet(parameterNumber: 1, size: 2, scaledConfigurationValue: voltage).format(),
 		zwave.configurationV1.configurationSet(parameterNumber: 3, size: 1, scaledConfigurationValue: 0).format(),			// Disable (=0) selective reporting
@@ -545,11 +547,11 @@ def configure() {
 //		zwave.configurationV1.configurationSet(parameterNumber: 102, size: 4, scaledConfigurationValue: 1573646).format(),  // L1/L2 for Amps & Watts, Whole HEM for Amps, Watts, & Volts
 //		zwave.configurationV1.configurationSet(parameterNumber: 112, size: 4, scaledConfigurationValue: dDelay).format(), 	// Defaul every 30 seconds
 		zwave.configurationV1.configurationSet(parameterNumber: 101, size: 4, scaledConfigurationValue: 6149).format(),   	// All L1/L2 kWh, total Volts & kWh
-		zwave.configurationV1.configurationSet(parameterNumber: 111, size: 4, scaledConfigurationValue: 60).format(), 		// Every 60 seconds
+		zwave.configurationV1.configurationSet(parameterNumber: 111, size: 4, scaledConfigurationValue: kDelay).format(), 		// Every 60 seconds
 		zwave.configurationV1.configurationSet(parameterNumber: 102, size: 4, scaledConfigurationValue: 1572872).format(),	// Amps L1, L2, Total
-		zwave.configurationV1.configurationSet(parameterNumber: 112, size: 4, scaledConfigurationValue: 30).format(), 		// every 30 seconds
+		zwave.configurationV1.configurationSet(parameterNumber: 112, size: 4, scaledConfigurationValue: dDelay).format(), 	// Every 30 seconds
 		zwave.configurationV1.configurationSet(parameterNumber: 103, size: 4, scaledConfigurationValue: 770).format(),		// Power (Watts) L1, L2, Total
-		zwave.configurationV1.configurationSet(parameterNumber: 113, size: 4, scaledConfigurationValue: 6).format() 		// every 6 seconds
+		zwave.configurationV1.configurationSet(parameterNumber: 113, size: 4, scaledConfigurationValue: 10).format() 		// every 10 seconds
 	], 2000)
 	logDebug cmd
 
